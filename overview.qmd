@@ -1,1 +1,10 @@
-
+title: "Final Project — Draft"
+author: "Ananya Kapoor"
+format:
+  html:
+    theme: cosmo
+execute:
+  echo: true
+  message: false
+  warning: false
+---
