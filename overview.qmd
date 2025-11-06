@@ -8,3 +8,13 @@ execute:
   message: false
   warning: false
 ---
+## Overview
+This project tests whether sleep traits (e.g., insomnia, short sleep) causally influence depression risk using two-sample Mendelian randomization. Genome-wide significant instruments from UK Biobank sleep GWAS will be paired with an independent depression GWAS, with rigorous checks for instrument strength and pleiotropy (MR-Egger, MR-PRESSO). The goal is to produce robust causal estimates that can guide prevention and clinical strategies targeting modifiable sleep factors.
+
+## Introduction
+
+### Background, problem, and significance
+Depression is a major public health burden, and sleep problems—insomnia, short sleep, and related traits—are highly comorbid and potentially modifiable. However, observational associations are vulnerable to confounding and reverse causation. This project uses two-sample Mendelian randomization (MR) to test whether sleep traits causally influence depression risk. Genome-wide significant, LD-pruned instruments for sleep exposures (from UK Biobank GWAS) will be harmonized with an independent depression GWAS. I will assess instrument strength (e.g., F-statistics), perform core MR analyses (inverse-variance weighted) and sensitivity checks for horizontal pleiotropy and heterogeneity (MR-Egger, weighted median, MR-PRESSO, leave-one-out, Cochran’s Q). Together, these steps aim to provide robust causal estimates that can prioritize sleep-related targets for prevention or intervention in depression.
+
+### Interdisciplinary context & planned faculty meeting
+The question is inherently interdisciplinary, spanning statistical genetics (instrument selection, causal inference), epidemiology (bias assessments, transportability), psychiatry and sleep medicine (phenotyping, clinical interpretation), and computational biology (data wrangling, QC, reproducibility). I plan to meet with **Dr. Shefali Setia Verma (Assistant Professor, Pathology & Laboratory Medicine)** and **Jagyashila Das (Post-doc, Setia Verma Lab)** to refine the analysis plan. Their perspectives will help stress-test phenotype definitions (e.g., insomnia vs. short sleep), clarify plausible biological pathways (circadian, inflammatory, neuroendocrine) that could produce pleiotropy, and align sensitivity analyses (e.g., MR-Egger/MR-PRESSO) with realistic lab- and clinic-informed mechanisms. Input from Pathology & Laboratory Medicine will also guide interpretation of effect sizes in a translational context—how genetic evidence might map to measurable biomarkers and future experimental validation—while reinforcing best practices in data governance and reproducible pipelines.
