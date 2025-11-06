@@ -1,4 +1,4 @@
-title: "Final Project — Draft"
+title: "Final Project"
 author: "Ananya Kapoor"
 format:
   html:
