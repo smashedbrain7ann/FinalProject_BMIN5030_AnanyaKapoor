@@ -1,0 +1,297 @@
+---
+title: "Causal Effects of Insomnia on Major Depressive Disorder"
+subtitle: "A Two-Sample Mendelian Randomization Analysis Using UK Biobank and PGC GWAS"
+author: "Ananya Kapoor"
+date: "Dec 12, 2025"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    theme: cosmo
+execute:
+  echo: true
+  message: true
+  warning: true
+  error: false
+---
+
+```{r}
+# Global chunk options-
+knitr::opts_chunk$set(fig.width = 7, fig.height = 5, fig.retina = 2)
+options(stringsAsFactors = FALSE)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+```
+
+# Introduction
+
+Depression is a leading cause of disability worldwide and imposes a substantial public health burden. Sleep disturbances—particularly insomnia—are highly prevalent among individuals with depression and are often observed to precede depressive episodes, suggesting insomnia may be a modifiable risk factor.
+
+However, observational associations between insomnia and depression are difficult to interpret causally because they can be driven by confounding (e.g., stress, socioeconomic status, medical comorbidity) and reverse causation (depression worsening sleep). To strengthen causal interpretation, this project applies two-sample Mendelian randomization (MR), which uses genetic variants associated with insomnia as instrumental variables.
+
+This report tests whether genetic liability to insomnia causally increases the risk of major depressive disorder (MDD). The primary causal estimate is obtained via inverse-variance weighted (IVW) MR, and robustness is evaluated using complementary estimators and pleiotropy/outlier diagnostics.
+
+# Scope of analysis and data science concepts
+
+This analysis draws on multiple data science concepts:
+
+1. **API-based data acquisition** of GWAS summary statistics (OpenGWAS)
+2. **Data cleaning / QC** for MR (instrument selection, LD clumping, allele harmonization, palindromic SNP handling)
+3. **Instrument strength assessment** (F-statistics)
+4. **Causal inference** using multiple MR estimators (IVW, MR-Egger, weighted median, simple median)
+5. **Sensitivity analyses** for heterogeneity and pleiotropy (Cochran’s Q, MR-Egger intercept, MR-PRESSO, leave-one-out)
+6. **Visualization** matched to MR outputs (scatter, leave-one-out forest, funnel)
+7. **Reproducible outputs** (saved tables and figures)
+
+# Data sources
+
+## Exposure GWAS: insomnia (UK Biobank)
+
+Genetic instruments for insomnia are taken from UK Biobank insomnia GWAS summary statistics (OpenGWAS ID: `ukb-b-3957`). The large sample size provides strong power to identify robust genome-wide significant instruments.
+
+## Outcome GWAS: major depressive disorder (PGC)
+
+Outcome associations are taken from the Psychiatric Genomics Consortium MDD GWAS (OpenGWAS ID: `ieu-a-1188`). Using a separate (independent) outcome GWAS is consistent with a two-sample MR design.
+
+# Variables and causal framework
+
+**Predictor / exposure:** SNP → insomnia effects (\(\beta_X\), \(SE_X\))
+**Predicted / outcome:** SNP → MDD effects (\(\beta_Y\), \(SE_Y\))
+
+MR estimates the causal effect of insomnia on MDD by combining SNP-specific ratios \(\beta_Y / \beta_X\) under standard MR assumptions.
+
+# Data cleaning and quality control
+
+Because this project uses GWAS summary statistics, “data cleaning” refers to MR-specific QC:
+
+1. **Instrument selection:** genome-wide significant insomnia SNPs (p < 5×10⁻⁸) to satisfy instrument relevance.
+2. **LD clumping:** r² < 0.001 within 10Mb to reduce correlation among instruments.
+3. **Allele harmonization:** align effect alleles between exposure and outcome.
+4. **Palindromic SNP handling:** remove ambiguous palindromic SNPs with intermediate allele frequencies (strand ambiguity).
+5. **Instrument strength:** compute per-SNP F-statistics (\(F = \beta_X^2/SE_X^2\)) and verify instruments are strong (F > 10).
+
+These steps reduce bias and improve interpretability of causal estimates.
+
+# Methods
+
+The primary estimator is IVW MR, which is efficient when pleiotropy is balanced. Sensitivity methods include:
+
+1. **MR-Egger** (allows directional pleiotropy; lower power)
+2.  **Weighted median** and **simple median** (robust when some instruments are invalid)
+3.  **Cochran’s Q** (heterogeneity)
+4.  **MR-Egger intercept** (directional pleiotropy screen)
+5.  **MR-PRESSO** (outlier detection + corrected estimate + distortion test)
+6.  **Leave-one-out** (influence of individual SNPs)
+7.  **Single-SNP MR** (SNP-level effects; required for funnel plot)
+
+# Analysis code
+
+> Before rendering, set the token locally in the Console:
+>
+> `Sys.setenv(OPENGWAS_JWT = "YOUR_TOKEN")`
+
+```{r}
+# Libraries
+suppressPackageStartupMessages({
+  library(TwoSampleMR)
+  library(ieugwasr)
+  library(data.table)
+  library(dplyr)
+  library(MRPRESSO)
+  library(ggplot2)
+})
+
+# Authentication check
+if (!nzchar(Sys.getenv("OPENGWAS_JWT"))) {
+  stop("OPENGWAS_JWT is not set. In Console run: Sys.setenv(OPENGWAS_JWT='YOUR_TOKEN')")
+}
+
+# Define GWAS IDs
+exposure_id <- "ukb-b-3957"  # Insomnia (UK Biobank)
+outcome_id  <- "ieu-a-1188"  # Major Depressive Disorder (PGC)
+
+# 1) Instruments for insomnia (GW sig + LD clumped)
+
+exposure_dat <- extract_instruments(
+  outcomes = exposure_id,
+  p1       = 5e-8,
+  clump    = TRUE,
+  r2       = 0.001,
+  kb       = 10000
+)
+
+cat("Number of insomnia instruments extracted:", nrow(exposure_dat), "\n")
+
+
+# 2) Outcome effects for the same SNPs
+
+outcome_dat <- extract_outcome_data(
+  snps     = exposure_dat$SNP,
+  outcomes = outcome_id
+)
+
+cat("Number of SNPs with MDD outcome data:", nrow(outcome_dat), "\n")
+
+
+# 3) Harmonise alleles (data cleaning)
+
+dat <- harmonise_data(exposure_dat, outcome_dat)
+
+cat("Number of harmonised SNPs:", nrow(dat), "\n")
+cat("SNPs retained for MR (mr_keep == TRUE):", sum(dat$mr_keep), "\n")
+
+
+# 4) Instrument strength (F-statistics)
+
+dat <- dat %>% mutate(F_stat = (beta.exposure^2) / (se.exposure^2))
+
+F_summary <- summary(dat$F_stat)
+prop_weak <- mean(dat$F_stat < 10, na.rm = TRUE)
+
+
+# 5) MR estimation (multiple estimators)
+
+mr_results <- mr(
+  dat,
+  method_list = c(
+    "mr_ivw",
+    "mr_ivw_fe",
+    "mr_egger_regression",
+    "mr_weighted_median",
+    "mr_simple_median"
+  )
+)
+
+# Odds ratios (interpretability for binary outcome)
+mr_results_or <- mr_results %>%
+  mutate(
+    OR = exp(b),
+    OR_lci95 = exp(b - 1.96 * se),
+    OR_uci95 = exp(b + 1.96 * se)
+  )
+
+
+# 6) Sensitivity analyses
+
+het_res   <- mr_heterogeneity(dat)
+pleio_res <- mr_pleiotropy_test(dat)
+loo_res   <- mr_leaveoneout(dat)
+ss        <- mr_singlesnp(dat)  # required for funnel plot
+
+# MR-PRESSO
+mrpresso_dat <- data.frame(
+  SNP          = dat$SNP,
+  BetaOutcome  = dat$beta.outcome,
+  BetaExposure = dat$beta.exposure,
+  SdOutcome    = dat$se.outcome,
+  SdExposure   = dat$se.exposure
+)
+
+set.seed(1234)
+mr_presso_res <- mr_presso(
+  BetaOutcome     = "BetaOutcome",
+  BetaExposure    = "BetaExposure",
+  SdOutcome       = "SdOutcome",
+  SdExposure      = "SdExposure",
+  OUTLIERtest     = TRUE,
+  DISTORTIONtest  = TRUE,
+  data            = mrpresso_dat,
+  NbDistribution  = 1000,
+  SignifThreshold = 0.05
+)
+
+
+# 7) Save outputs for reproducibility
+
+dir.create("results", showWarnings = FALSE)
+dir.create("figures", showWarnings = FALSE)
+
+fwrite(mr_results,    file.path("results","mr_results_insomnia_to_MDD.tsv"), sep="\t")
+fwrite(mr_results_or, file.path("results","mr_results_insomnia_to_MDD_OR.tsv"), sep="\t")
+fwrite(het_res,       file.path("results","mr_heterogeneity_insomnia_to_MDD.tsv"), sep="\t")
+fwrite(pleio_res,     file.path("results","mr_pleiotropy_insomnia_to_MDD.tsv"), sep="\t")
+fwrite(loo_res,       file.path("results","mr_leaveoneout_insomnia_to_MDD.tsv"), sep="\t")
+fwrite(ss,            file.path("results","mr_singlesnp_insomnia_to_MDD.tsv"), sep="\t")
+saveRDS(mr_presso_res,file.path("results","mr_presso_insomnia_to_MDD.rds"))
+```
+
+# Results
+
+## Instrument strength
+
+All instruments are expected to be strong if F-statistics are well above 10. Strong instruments reduce weak-instrument bias and support the MR relevance assumption.
+
+```{r}
+F_summary
+cat("Proportion of SNPs with F < 10:", prop_weak, "\n")
+```
+
+## Causal effect estimates (IVW + sensitivity methods)
+
+The primary estimate is IVW MR. Sensitivity estimators (weighted median / MR-Egger / simple median) help assess robustness under different patterns of invalid instruments.
+
+```{r}
+mr_results
+mr_results_or
+```
+
+## Heterogeneity and pleiotropy diagnostics
+
+Cochran’s Q tests for heterogeneity among SNP-specific causal estimates. The MR-Egger intercept provides a screen for directional pleiotropy. MR-PRESSO provides outlier detection and corrected estimates.
+
+```{r}
+het_res
+pleio_res
+mr_presso_res
+```
+
+## Leave-one-out and single-SNP results
+
+Leave-one-out results assess whether the causal estimate is driven by a single SNP. Single-SNP MR results also support the funnel plot and SNP-level inspection.
+
+```{r}
+head(loo_res)
+head(ss)
+```
+
+# Visualization
+
+## Scatter plot
+
+The scatter plot visualizes SNP effects on insomnia (x-axis) vs MDD (y-axis) and overlays MR fitted lines. A positive slope indicates that variants increasing insomnia tend to increase depression liability.
+
+```{r}
+p_scatter <- mr_scatter_plot(mr_results, dat)[[1]]
+print(p_scatter)
+ggsave(file.path("figures","scatter_insomnia_to_MDD.png"), p_scatter, width=6, height=5, dpi=300)
+```
+
+## Leave-one-out forest plot
+
+The forest plot summarizes leave-one-out IVW estimates. Stability across leave-one-out iterations supports robustness.
+
+```{r}
+p_forest <- mr_forest_plot(loo_res)[[1]]
+print(p_forest)
+ggsave(file.path("figures","forest_loo_insomnia_to_MDD.png"), p_forest, width=6, height=8, dpi=300)
+```
+
+## Funnel plot
+
+The funnel plot uses single-SNP MR results and visually screens for asymmetry, which can reflect directional pleiotropy.
+
+```{r}
+p_funnel <- mr_funnel_plot(ss)[[1]]
+print(p_funnel)
+ggsave(file.path("figures","funnel_insomnia_to_MDD.png"), p_funnel, width=6, height=5, dpi=300)
+```
+
+# Discussion and limitations
+
+This study uses multiple complementary MR estimators and sensitivity analyses to evaluate whether insomnia has a causal effect on MDD. Consistency in direction across estimators supports robustness, while heterogeneity and pleiotropy diagnostics help identify potential violations of MR assumptions.
+
+Limitations include the fact that MR assumptions cannot be fully proven using summary statistics alone, and results may be most generalizable to populations represented in the underlying GWAS. Residual pleiotropy or sample overlap could still influence results, though outlier detection and multiple estimators aim to reduce these risks.
+
+# Conclusion
+
+Using two-sample Mendelian randomization, this analysis finds evidence consistent with a causal effect of insomnia liability on MDD risk. Results are reported with effect estimates, odds ratios, and multiple sensitivity analyses to justify causal claims and quantify uncertainty. These findings support the hypothesis that improving sleep may reduce depression risk and motivate future work extending to additional sleep traits or multivariable MR approaches.
